@@ -1,84 +1,91 @@
+const { SlashCommandBuilder } = require('@discordjs/builders');
+const { PermissionFlagsBits } = require('discord.js');
 const utils = require('../utils.js');
+
 let votePending = {};
 
+// Function to set the max user limit for the voice channel
+function doSetMax(voiceChannel, maxInt) {
+    return voiceChannel.edit({
+        userLimit: maxInt
+    });
+}
+
 module.exports = {
-    name: 'setmax',
-    description: 'Set the maximum number of users that can connect to your voice channel. \'0\' will reset it.',
-    usage: 'maxUsers',
+    data: new SlashCommandBuilder()
+        .setName('setmax')
+        .setDescription('Set the maximum number of users that can connect to your voice channel. \'0\' will reset it.')
+        .addIntegerOption(option =>
+            option.setName('maxusers')
+                .setDescription('Max users limit')
+                .setRequired(true)
+        ),
     cooldown: 20,
     guildOnly: true,
 
-    execute(message, args) {
-        return new Promise((resolve, reject) => {
-            let maxInt = Number.parseInt(args[0]),
-                subject = '',
-                voiceChannel = utils.get(message, 'member.voice.channel'),
-                targetUsers = [],
-                userCount;
+    async execute(interaction) {
+        const maxInt = interaction.options.getInteger('maxusers');
+        const voiceChannel = interaction.member.voice.channel;
 
-            if (voiceChannel == null) {
-                resolve('User not connected to a voice channel');
-                return;
-            }
+        if (!voiceChannel) {
+            return interaction.reply('You must be in a voice channel to set the max users.');
+        }
 
-            if (voiceChannel.parentID !== message.channel.parentID) {
-                resolve('Cannot manage the voice channel');
-                return;
-            }
+        // Check if the channel is in the same category as the command channel
+        if (voiceChannel.parentId !== interaction.channel.parentId) {
+            return interaction.reply('You cannot manage a voice channel in a different category.');
+        }
 
-            if (Number.isNaN(maxInt) || maxInt < 0 || maxInt >= 100) {
-                resolve('Invalid user limit: ' + maxInt);
-                return;
-            }
+        if (maxInt < 0 || maxInt >= 100) {
+            return interaction.reply('Invalid user limit: ' + maxInt);
+        }
 
-            userCount = voiceChannel.members.size;
-            if (maxInt > 0 && maxInt < userCount) {
-                resolve('User limit is lower than the current user count');
-                return;
-            }
+        const userCount = voiceChannel.members.size;
 
-            if (voiceChannel.userLimit === maxInt) {
-                resolve('User limit is already ' + maxInt);
-                return;
-            }
+        if (maxInt > 0 && maxInt < userCount) {
+            return interaction.reply('User limit is lower than the current user count.');
+        }
 
-            voiceChannel.members.forEach(member => {
-                if (member.id !== message.member.id) {
-                    targetUsers.push(member);
-                }
-            });
+        if (voiceChannel.userLimit === maxInt) {
+            return interaction.reply('User limit is already ' + maxInt);
+        }
 
-            if (userCount > 1) {
-                if (votePending[voiceChannel.id] === true) {
-                    resolve('There is already a vote pending on that channel');
-                    return;
-                }
-
-                votePending[voiceChannel.id] = true;
-                utils.vote('Set user limit of ' + voiceChannel.name + ' to ' + maxInt + '? Please vote using the reactions below.', message.channel, {
-                    targetUsers: targetUsers,
-                    time: 10000
-                }).then(results => {
-                    if (((results.agree.count + 1) / userCount) > 0.5) { //+1 for requesting user
-                        voiceChannel.edit({
-                            userLimit: maxInt
-                        }).then(() => {
-                            resolve('New userLimit set');
-                        });
-                    } else {
-                        resolve('Request rejected by channel members');
-                    }
-                    delete votePending[voiceChannel.id];
-                }).catch(() => {
-                    delete votePending[voiceChannel.id];
-                });
-            } else {
-                voiceChannel.edit({
-                    userLimit: maxInt
-                }).then(() => {
-                    resolve('New userLimit set');
-                });
+        let targetUsers = [];
+        // Exclude bots from the vote
+        voiceChannel.members.forEach(member => {
+            if (member.id !== interaction.member.id && !member.user.bot) {
+                targetUsers.push(member);
             }
         });
+
+        if (userCount > 1) {
+            if (votePending[voiceChannel.id] === true) {
+                return interaction.reply('There is already a vote pending on that channel.');
+            }
+
+            votePending[voiceChannel.id] = true;
+
+            // Call the vote system, ensure that utils.vote works with interactions
+            utils.vote(`Set user limit of ${voiceChannel.name} to ${maxInt}? Please vote using the reactions below.`, interaction.channel, {
+                targetUsers,
+                time: 10000
+            }).then(results => {
+                if (((results.agree.count + 1) / userCount) > 0.5) { // +1 for requesting user
+                    doSetMax(voiceChannel, maxInt).then(() => {
+                        interaction.reply('New user limit set');
+                    });
+                } else {
+                    interaction.reply('Request rejected by channel members');
+                }
+                delete votePending[voiceChannel.id];
+            }).catch(() => {
+                delete votePending[voiceChannel.id];
+            });
+        } else {
+            // Apply the new user limit if there's only one member in the channel
+            doSetMax(voiceChannel, maxInt).then(() => {
+                interaction.reply('New user limit set');
+            });
+        }
     }
 };
