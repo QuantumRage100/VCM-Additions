@@ -23,3 +23,8 @@ The prefix that the command listener will respond to (default is '!')
 ##### "DISCORD_TOKEN"
 
 The app bot user token. Found in the Discord application console - https://discordapp.com/developers/applications/me/
+
+##### "GOOGLE_API_KEY"
+##### "SEARCH_ENGINE_ID"
+
+you will need to make your own google api search engine, and filter for just the reddit website - https://developers.google.com/custom-search/v1/overview
