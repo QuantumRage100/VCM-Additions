@@ -8,16 +8,19 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const SEARCH_ENGINE_ID = process.env.SEARCH_ENGINE_ID;
 const FILE_PATH = './gameAbbreviations.json';
 
+// Logs messages with a timestamp for better tracking
 function logWithTimestamp(message) {
     const timestamp = new Date().toISOString();
     console.log(`[${timestamp}] ${message}`);
 }
 
+// Queries Google for an abbreviation of a game name and stores results locally
 async function queryGoogleForAbbreviation(gameName) {
     logWithTimestamp(`Looking up abbreviation for game: "${gameName}"`);
 
     let abbreviations = {};
 
+    // Check if abbreviations file exists and load it
     if (fs.existsSync(FILE_PATH)) {
         try {
             logWithTimestamp("Loading abbreviations from local file.");
@@ -28,11 +31,13 @@ async function queryGoogleForAbbreviation(gameName) {
         }
     }
 
+    // Return abbreviation if it exists in the local file
     if (abbreviations[gameName]) {
         logWithTimestamp(`Abbreviation found in local file for "${gameName}": ${abbreviations[gameName]}`);
         return abbreviations[gameName];
     }
 
+    // Search Google for an abbreviation if it's not found locally
     const query = `"${gameName}"`;
     const apiUrl = `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(query)}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`;
 
@@ -40,6 +45,7 @@ async function queryGoogleForAbbreviation(gameName) {
         const response = await fetch(apiUrl);
         const data = await response.json();
 
+        // Parse Google results for a Reddit subreddit match
         if (data.items && data.items.length > 0) {
             for (const item of data.items) {
                 const url = item.link;
@@ -61,6 +67,7 @@ async function queryGoogleForAbbreviation(gameName) {
     }
 }
 
+// Checks if the bot has permission to act on a channel
 function canActOn(channel) {
     let perms;
     if (!channel.parent) {
@@ -70,6 +77,7 @@ function canActOn(channel) {
     return perms.has('MANAGE_CHANNELS') && perms.has('CONNECT') && channel.type === 'voice';
 }
 
+// Deletes an empty voice channel
 async function deleteEmptyChannel(channel) {
     logWithTimestamp(`Attempting to delete empty channel: "${channel.name}"`);
     try {
@@ -80,6 +88,7 @@ async function deleteEmptyChannel(channel) {
     }
 }
 
+// Manages the channels in a given category, deleting empty ones and renaming others
 async function manageChannels(cat) {
     logWithTimestamp(`Managing channels in category: "${cat.name}"`);
     const category = await cat.fetch();
@@ -90,6 +99,7 @@ async function manageChannels(cat) {
     let index = 1;
     logWithTimestamp(`Initial index: ${index}`);
 
+    // Processes populated channels for naming
     let populatedChannels = voiceChannels.filter(channel => channel.members.size > 0);
     logWithTimestamp(`Populated channels found: ${populatedChannels.size}`);
     
@@ -101,6 +111,7 @@ async function manageChannels(cat) {
         index++;
     });
 
+    // Deletes empty channels
     let emptyVoiceChannels = voiceChannels.filter(channel => channel.members.size === 0);
     logWithTimestamp(`Empty channels to delete: ${emptyVoiceChannels.size}`);
 
@@ -109,7 +120,7 @@ async function manageChannels(cat) {
         await deleteEmptyChannel(channel); // Ensure each deletion completes
     }
 
-    // Check for and delete any remaining higher-indexed empty channels
+    // Deletes any higher-indexed empty channels
     const higherIndexedChannels = category.children.filter(
         (c) => c.type === 'voice' && parseInt(c.name.split(' ').pop()) > index && c.members.size === 0
     );
@@ -119,7 +130,7 @@ async function manageChannels(cat) {
         await deleteEmptyChannel(channel);
     }
 
-    // Create the next highest indexed voice channel
+    // Creates the next indexed voice channel
     guild.channels.create('Voice Channel ' + index, {
         type: 'voice',
         parent: category
@@ -130,12 +141,14 @@ async function manageChannels(cat) {
     });
 }
 
+// Determines the name of a voice channel based on user activity
 async function getChannelName(channel, index) {
     logWithTimestamp(`getChannelName called with index ${index} for channel "${channel.name}"`);
     let activityNames = {};
     let max = 0;
     let activityName;
 
+    // Collects active game names from users in the channel
     channel.members.forEach(member => {
         let activities = utils.get(member, 'presence.activities');
         if (member.user.bot) return;
@@ -150,6 +163,7 @@ async function getChannelName(channel, index) {
         });
     });
 
+    // Finds the most common game name in the channel
     for (let name in activityNames) {
         if (activityNames[name] > max) {
             max = activityNames[name];
@@ -157,6 +171,7 @@ async function getChannelName(channel, index) {
         }
     }
 
+    // Returns either the game abbreviation or the index-based name
     if (activityName) {
         logWithTimestamp(`Detected activity name for channel: "${activityName}"`);
         const subredditName = await queryGoogleForAbbreviation(activityName);
@@ -175,6 +190,7 @@ async function getChannelName(channel, index) {
 const renameCoolDowns = new Discord.Collection();
 const rateLimit = (1000 * 60 * 10) + 1000;
 
+// Handles channel renaming with a cooldown mechanism
 function renameChannel(channel, name) {
     logWithTimestamp(`renameChannel called with name: ${name} for channel "${channel.name}"`);
     if (channel.members.size === 0) {
@@ -193,6 +209,7 @@ function renameChannel(channel, name) {
         return;
     }
 
+    // Applies cooldown to limit renaming frequency
     let channelCoolDown;
     let channelId = channel.id;
     if (!renameCoolDowns.has(channelId)) {
