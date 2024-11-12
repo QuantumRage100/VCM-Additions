@@ -1,43 +1,45 @@
-const prefix = process.env.COMMAND_PREFIX;
+const { SlashCommandBuilder } = require('@discordjs/builders');
+const { CommandInteraction } = require('discord.js');
 
 module.exports = {
-	name: 'help',
-	description: 'List all of my commands or info about a specific command.',
-	aliases: ['commands'],
-	usage: '[command name]',
-	cooldown: 5,
-	
-	execute(message, args) {
-		const { commands } = message.client;
-		const data = [];
+    data: new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('List all of my commands or info about a specific command.')
+        .addStringOption(option =>
+            option.setName('command')
+                .setDescription('The command you want help with')
+                .setRequired(false)
+        ),
+    cooldown: 5,
+    async execute(interaction) {
+        const { commands } = interaction.client;
+        const data = [];
 
-		if (!args.length) {
-			data.push('Here\'s a list of all my commands:');
-			data.push(commands.map(command => command.name).join(', '));
-			data.push(`\nYou can send \`${prefix}help [command name]\` to get info on a specific command!`);
-		}
-		else {
-			if (!commands.has(args[0])) {
-				return message.reply('that\'s not a valid command!');
-			}
+        const commandName = interaction.options.getString('command');
 
-			const command = commands.get(args[0]);
+        if (!commandName) {
+            // If no command is specified, list all commands
+            data.push('Here\'s a list of all my commands:');
+            data.push(Array.from(commands.keys()).join(', ')); // Changed this line to work with Map
+            data.push(`\nYou can send \`/help [command name]\` to get info on a specific command!`);
+        } else {
+            // If a command is specified, show info about that command
+            const command = commands.get(commandName);
 
-			data.push(`**Name:** ${command.name}`);
+            if (!command) {
+                return interaction.reply('That\'s not a valid command!');
+            }
 
-			if (command.description) data.push(`**Description:** ${command.description}`);
-			if (command.aliases) data.push(`**Aliases:** ${command.aliases.join(', ')}`);
-			if (command.usage) data.push(`**Usage:** ${prefix}${command.name} ${command.usage}`);
+            data.push(`**Name:** ${command.name}`);
 
-			data.push(`**Cooldown:** ${command.cooldown || 3} second(s)`);
-		}
+            if (command.description) data.push(`**Description:** ${command.description}`);
+            if (command.aliases) data.push(`**Aliases:** ${command.aliases.join(', ')}`);
+            if (command.usage) data.push(`**Usage:** \`/help ${command.name} ${command.usage}\``);
 
-		return message.author.send(data, { split: true })
-			.then(() => {
-				if (message.channel.type !== 'dm') {
-					message.channel.send('I\'ve sent you a DM with all my commands!');
-				}
-			})
-			.catch(() => message.reply('it seems like I can\'t DM you!'));
-	}
+            data.push(`**Cooldown:** ${command.cooldown || 3} second(s)`);
+        }
+
+        // Send the response
+        return interaction.reply({ content: data.join('\n'), ephemeral: true });
+    }
 };
