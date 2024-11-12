@@ -1,161 +1,245 @@
 const utils = require('../utils.js');
+const Discord = require('discord.js');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const fs = require('fs');
+require('dotenv').config();
 
-/**
- * Checks to see if the voice channel is a child of a category we can manage
- * 
- * @param {VoiceChannel} channel the voice channel
- */
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const SEARCH_ENGINE_ID = process.env.SEARCH_ENGINE_ID;
+const FILE_PATH = './gameAbbreviations.json';
+
+function logWithTimestamp(message) {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${message}`);
+}
+
+async function queryGoogleForAbbreviation(gameName) {
+    logWithTimestamp(`Looking up abbreviation for game: "${gameName}"`);
+
+    let abbreviations = {};
+
+    if (fs.existsSync(FILE_PATH)) {
+        try {
+            logWithTimestamp("Loading abbreviations from local file.");
+            const data = fs.readFileSync(FILE_PATH, 'utf-8');
+            abbreviations = JSON.parse(data);
+        } catch (error) {
+            logWithTimestamp(`Error reading gameAbbreviations.json: ${error.message}`);
+        }
+    }
+
+    if (abbreviations[gameName]) {
+        logWithTimestamp(`Abbreviation found in local file for "${gameName}": ${abbreviations[gameName]}`);
+        return abbreviations[gameName];
+    }
+
+    const query = `"${gameName}"`;
+    const apiUrl = `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(query)}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`;
+
+    try {
+        const response = await fetch(apiUrl);
+        const data = await response.json();
+
+        if (data.items && data.items.length > 0) {
+            for (const item of data.items) {
+                const url = item.link;
+                const subredditMatch = url.match(/reddit\.com\/r\/(\w+)/);
+                if (subredditMatch) {
+                    const subredditName = subredditMatch[1];
+                    abbreviations[gameName] = subredditName;
+                    fs.writeFileSync(FILE_PATH, JSON.stringify(abbreviations, null, 2));
+                    logWithTimestamp(`Subreddit "${subredditName}" saved to local file.`);
+                    return subredditName;
+                }
+            }
+        }
+        logWithTimestamp(`No relevant search results found for "${gameName}".`);
+        return null;
+    } catch (error) {
+        logWithTimestamp(`Error querying Google API: ${error.message}`);
+        return null;
+    }
+}
+
 function canActOn(channel) {
     let perms;
-
     if (!channel.parent) {
         return false;
     }
-
     perms = channel.parent.permissionsFor(channel.client.user);
     return perms.has('MANAGE_CHANNELS') && perms.has('CONNECT') && channel.type === 'voice';
 }
 
-/**
- * Manages the voice channels in a category by
- *  Ensuring that there is always one empty voice channel.
- *  Resetting vacated voice channels
- *  Naming occupied voice channels in accordance with the activity of the
- *   majority of occupants.
- * 
- * @param {CategoryChannel} category The category
- */
-function manageChannels(category) {
-    let guild = category.guild,
-        voiceChannels,
-        emptyVoiceChannels,
-        promises,
-        createNewChannel = false;
-
-    voiceChannels = category.children.filter(channel => {
-        return channel.type === 'voice';
-    });
-
-    emptyVoiceChannels = voiceChannels.filter(channel => {
-        return channel.members.size === 0;
-    });
-
-    //Ensure one empty channel
-    promises = [];
-    if (emptyVoiceChannels.size > 0) {
-        emptyVoiceChannels.forEach(channel => {
-            let permissionOverwrites = category.permissionOverwrites.map(() => {});
-            if (channel.id === emptyVoiceChannels.first().id) {
-                //Edit happens in lockPermissions. Set userLimit on channel data.
-                /*promises.push(channel.edit({
-                    userLimit: 0
-                }));*/
-                channel.userLimit = 0;
-                promises.push(channel.lockPermissions());
-            } else {
-                promises.push(channel.delete());
-                voiceChannels.delete(channel.id);
-            }
-        });
-    } else if (emptyVoiceChannels.size === 0) {
-        createNewChannel = true;
+async function deleteEmptyChannel(channel) {
+    logWithTimestamp(`Attempting to delete empty channel: "${channel.name}"`);
+    try {
+        await channel.delete();
+        logWithTimestamp(`Successfully deleted empty channel: "${channel.name}"`);
+    } catch (error) {
+        logWithTimestamp(`Failed to delete channel "${channel.name}": ${error.message}`);
     }
-
-    Promise.all(promises).then(() => {
-        let index = 1,
-            channelName;
-
-        voiceChannels = category.children.filter(channel => {
-            return channel.type === 'voice';
-        });
-
-        voiceChannels.forEach(channel => {
-            channelName = getChannelName(channel, index);
-            if (channelName !== channel.name) {
-                channel.setName(channelName);
-            }
-            index++;
-        });
-
-        if (createNewChannel) {
-            guild.channels.create('Voice #' + index, {
-                type: 'voice',
-                parent: category
-            });
-        }
-    });
-
 }
 
-/**
- * Gets the name for a channel based on the activity of it's members
- * 
- * @param {VoiceChannel} channel The voice channel
- * @param {Number} [index] The index of the channel passed. If not passed the, current name will be used
- */
-function getChannelName(channel, index) {
-    let activityNames = {},
-        max = 0,
-        activityName, channelName;
+async function manageChannels(cat) {
+    logWithTimestamp(`Managing channels in category: "${cat.name}"`);
+    const category = await cat.fetch();
+    let guild = category.guild;
+    let voiceChannels = category.children.filter(channel => channel.type === 'voice');
+    logWithTimestamp(`Total voice channels in category: ${voiceChannels.size}`);
+
+    let index = 1;
+    logWithTimestamp(`Initial index: ${index}`);
+
+    let populatedChannels = voiceChannels.filter(channel => channel.members.size > 0);
+    logWithTimestamp(`Populated channels found: ${populatedChannels.size}`);
+    
+    populatedChannels.forEach(channel => {
+        logWithTimestamp(`Assigning index ${index} to populated channel "${channel.name}" with ${channel.members.size} member(s)`);
+        getChannelName(channel, index).then(channelName => {
+            renameChannel(channel, channelName);
+        });
+        index++;
+    });
+
+    let emptyVoiceChannels = voiceChannels.filter(channel => channel.members.size === 0);
+    logWithTimestamp(`Empty channels to delete: ${emptyVoiceChannels.size}`);
+
+    for (const channel of emptyVoiceChannels.values()) {
+        logWithTimestamp(`Marking empty channel "${channel.name}" for deletion`);
+        await deleteEmptyChannel(channel); // Ensure each deletion completes
+    }
+
+    // Check for and delete any remaining higher-indexed empty channels
+    const higherIndexedChannels = category.children.filter(
+        (c) => c.type === 'voice' && parseInt(c.name.split(' ').pop()) > index && c.members.size === 0
+    );
+
+    for (const channel of higherIndexedChannels.values()) {
+        logWithTimestamp(`Deleting unnecessary higher-indexed empty channel: "${channel.name}"`);
+        await deleteEmptyChannel(channel);
+    }
+
+    // Create the next highest indexed voice channel
+    guild.channels.create('Voice Channel ' + index, {
+        type: 'voice',
+        parent: category
+    }).then(newChannel => {
+        logWithTimestamp(`Successfully created new channel: "${newChannel.name}" with index ${index}`);
+    }).catch(error => {
+        logWithTimestamp(`Failed to create new voice channel: ${error.message}`);
+    });
+}
+
+async function getChannelName(channel, index) {
+    logWithTimestamp(`getChannelName called with index ${index} for channel "${channel.name}"`);
+    let activityNames = {};
+    let max = 0;
+    let activityName;
 
     channel.members.forEach(member => {
         let activities = utils.get(member, 'presence.activities');
+        if (member.user.bot) return;
 
-        if(member.user.bot) {
-            return;
-        }
-
-        let name = null;
         activities.forEach(activity => {
             if (activity.type === 'PLAYING') {
-                name = activity.name;
+                let name = activity.name;
+                if (name) {
+                    activityNames[name] = (activityNames[name] || 0) + 1;
+                }
             }
         });
-
-        if (name && name !== '') {
-            if (activityNames[name] != null) {
-                activityNames[name]++;
-            } else {
-                activityNames[name] = 1;
-            }
-        }
-
     });
 
-    for (let n in activityNames) {
-        if (activityNames.hasOwnProperty(n)) {
-            if (activityNames[n] > max) {
-                max = activityNames[n];
-                activityName = n;
-            }
+    for (let name in activityNames) {
+        if (activityNames[name] > max) {
+            max = activityNames[name];
+            activityName = name;
         }
     }
 
-    if (index == null) {
-        channelName = channel.name.split('(')[0].trim();
+    if (activityName) {
+        logWithTimestamp(`Detected activity name for channel: "${activityName}"`);
+        const subredditName = await queryGoogleForAbbreviation(activityName);
+        const channelName = subredditName || activityName;
+        logWithTimestamp(`Renaming channel to: "${channelName}"`);
+        renameChannel(channel, channelName);
+        return channelName;
     } else {
-        channelName = 'Voice #' + index;
+        const defaultName = `Voice Channel ${index}`;
+        logWithTimestamp(`No active game detected. Setting default channel name: ${defaultName}`);
+        renameChannel(channel, defaultName);
+        return defaultName;
+    }
+}
+
+const renameCoolDowns = new Discord.Collection();
+const rateLimit = (1000 * 60 * 10) + 1000;
+
+function renameChannel(channel, name) {
+    logWithTimestamp(`renameChannel called with name: ${name} for channel "${channel.name}"`);
+    if (channel.members.size === 0) {
+        let category = channel.parent;
+        channel.delete().then(() => {
+            guild.channels.create(name, {
+                type: 'voice',
+                parent: category
+            });
+        });
+        return;
     }
 
-    if (max > 0) {
-        channelName = channelName + ' (' + activityName + ')';
+    if (channel.name === name) {
+        logWithTimestamp(`Channel name already set to "${name}". No rename necessary.`);
+        return;
     }
 
-    return channelName;
+    let channelCoolDown;
+    let channelId = channel.id;
+    if (!renameCoolDowns.has(channelId)) {
+        channelCoolDown = new Discord.Collection();
+        channelCoolDown.set('count', 0);
+        channelCoolDown.set('name', undefined);
+        logWithTimestamp(`Cooldown started for channel: ${channelId} (${channel.name})`);
+        channelCoolDown.set('timeout', setTimeout(() => {
+            let ccd = renameCoolDowns.get(channelId);
+            let queuedName = ccd.get('name');
+            if (queuedName !== undefined) {
+                ccd.get('channel').fetch()
+                    .then((queuedChannel) => {
+                        logWithTimestamp(`Completing rename of channel: ${channelId} (${queuedChannel.name}). New name should be ${queuedName}`);
+                        queuedChannel.setName(queuedName).catch((e) => {});
+                    })
+                    .catch((e) => {});
+            }
+           renameCoolDowns.delete(channelId);
+        }, rateLimit));
+        renameCoolDowns.set(channelId, channelCoolDown);
+    } else {
+        channelCoolDown = renameCoolDowns.get(channelId);
+    }
+    let count = channelCoolDown.get('count');
+    count++;
+    logWithTimestamp(`${count} requests to rename channel: ${channelId} (${channel.name}). Requested name is '${name}'`);
+    channelCoolDown.set('count', count);
+    channelCoolDown.set('channel', channel);
+
+    if (count < 3) {
+        channel.setName(name).catch((e) => {});
+    } else {
+        logWithTimestamp(`Queueing name '${name}' for channel: ${channelId} (${channel.name})`);
+        channelCoolDown.set('name', name);
+    }
 }
 
 module.exports = {
     init: function (client) {
-
-        //Update channel state at startup
+        logWithTimestamp("Bot initialized and ready.");
         client.guilds.cache.forEach(guild => {
             guild.channels.cache.filter(channel => {
                 let perms;
-
                 if (channel.type !== 'category') {
                     return false;
                 }
-
                 perms = channel.permissionsFor(client.user);
                 return perms.has('MANAGE_CHANNELS') && perms.has('CONNECT');
             }).forEach(category => {
@@ -166,19 +250,18 @@ module.exports = {
         client.on('voiceStateUpdate', (oldState, newState) => {
             let newUserChannel = newState.channel,
                 oldUserChannel = oldState.channel,
-                oldCategoryID,
-                newCategory;
-
-            //If a user enters of leaves a configured category, update it.
-            if (oldUserChannel != null && canActOn(oldUserChannel) && (newUserChannel == null || !newUserChannel.equals(oldUserChannel))) {
-                oldCategoryID = oldUserChannel.parentID;
-                manageChannels(oldUserChannel.parent);
-            }
-
+                newCategoryID;
 
             if (newUserChannel != null && canActOn(newUserChannel) && (oldUserChannel == null || !newUserChannel.equals(oldUserChannel))) {
-                if (oldCategoryID !== newUserChannel.parentID) { //No need to manage the same category twice.
-                    manageChannels(newUserChannel.parent);
+                newCategoryID = newUserChannel.parentID;
+                logWithTimestamp(`User joined voice channel: "${newUserChannel.name}"`);
+                manageChannels(newUserChannel.parent);
+            }
+
+            if (oldUserChannel != null && canActOn(oldUserChannel) && (newUserChannel == null || !newUserChannel.equals(oldUserChannel))) {
+                if (newCategoryID !== oldUserChannel.parentID) {
+                    logWithTimestamp(`User left voice channel: "${oldUserChannel.name}"`);
+                    manageChannels(oldUserChannel.parent);
                 }
             }
         });
@@ -187,9 +270,10 @@ module.exports = {
             if (oldPresence == null || !oldPresence.equals(newPresence)) {
                 let newUserChannel = utils.get(newPresence, 'member.voice.channel');
                 if (newUserChannel != null) {
-                    //Shouldnt be necessary to manage an entire category when the presence updates.
-                    newUserChannel.setName(getChannelName(newUserChannel));
-                } 
+                    getChannelName(newUserChannel, 1).then(channelName => {
+                        renameChannel(newUserChannel, channelName);
+                    });
+                }
             }
         });
     }
