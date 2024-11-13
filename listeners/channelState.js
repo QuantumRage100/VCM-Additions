@@ -263,7 +263,7 @@ module.exports = {
 
         client.on('presenceUpdate', (oldPresence, newPresence) => {
             if (oldPresence == null || !oldPresence.equals(newPresence)) {
-                let newUserChannel = utils.get(newPresence, 'member.voice.channel');
+                let newUserChannel = newPresence?.member?.voice?.channel;
                 if (newUserChannel != null) {
                     getChannelName(newUserChannel, 1).then(channelName => {
                         renameChannel(newUserChannel, channelName);
