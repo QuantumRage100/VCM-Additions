@@ -1,99 +1,107 @@
-const { SlashCommandBuilder } = require('@discordjs/builders'); // For SlashCommandBuilder
-const { PermissionFlagsBits } = require('discord.js'); // For permission handling
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const utils = require('../utils.js');
-
 let votePending = {};
 
-// Function to lock the voice channel
-function doLock(voiceChannel) {
-    let perms, promises = [];
+/**
+ * Locks the voice channel by setting necessary permissions for bot members and denying CONNECT for all others.
+ * @param {VoiceChannel} voiceChannel The voice channel to lock
+ * @returns {Promise}
+ */
+async function lockChannel(voiceChannel) {
+    try {
+        const members = await voiceChannel.guild.members.fetch();
+        const botPermissionPromises = members
+            .filter(member => member.user.bot)
+            .map(botMember => 
+                voiceChannel.permissionOverwrites.edit(botMember.id, {
+                    [PermissionFlagsBits.Connect]: true
+                })
+            );
 
-    // Reset CONNECT overwrites
-    perms = voiceChannel.permissionOverwrites.map(overwrite => ({
-        deny: overwrite.denied.remove(PermissionFlagsBits.Connect).bitfield,
-        allow: overwrite.allowed.remove(PermissionFlagsBits.Connect).bitfield,
-        id: overwrite.id,
-        type: overwrite.type,
-    }));
+        await Promise.all(botPermissionPromises);
 
-    // Edit the permissions with the updated permissions
-    let promise = voiceChannel.edit({ permissionOverwrites: perms });
-
-    // Set CONNECT on for current members (and this bot)
-    promise = promise.then(() => {
-        promises = [];
-        voiceChannel.members.forEach(member => {
-            promises.push(voiceChannel.permissionOverwrites.create(member, { 'CONNECT': true }));
+        await voiceChannel.permissionOverwrites.edit(voiceChannel.guild.roles.everyone, {
+            [PermissionFlagsBits.Connect]: false,
         });
-        promises.push(voiceChannel.permissionOverwrites.create(voiceChannel.client.user, { 'CONNECT': true }));
-        return Promise.all(promises);
-    });
 
-    // Set CONNECT off for all roles
-    promise = promise.then(() => {
-        let promises = [];
-        voiceChannel.guild.roles.cache.forEach(role => {
-            promises.push(voiceChannel.permissionOverwrites.create(role, { 'CONNECT': false }));
+        const permissionPromises = [];
+        voiceChannel.permissionOverwrites.cache.forEach(overwrite => {
+            if (!members.some(member => member.id === overwrite.id && member.user.bot)) {
+                permissionPromises.push(
+                    voiceChannel.permissionOverwrites.edit(overwrite.id, {
+                        [PermissionFlagsBits.Connect]: false
+                    })
+                );
+            }
         });
-        return Promise.all(promises);
-    });
 
-    return promise;
+        await Promise.all(permissionPromises);
+        
+    } catch (error) {
+        console.error(`Failed to lock ${voiceChannel.name}:`, error);
+    }
 }
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('lock')
-        .setDescription('Lock the voice channel so only the current occupants can join'),
-    cooldown: 20,
-    guildOnly: true,
+        .setDescription('Locks the voice channel so only specified bots and current occupants can join')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
 
     async execute(interaction) {
+        if (!interaction.channel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.SendMessages)) {
+            await interaction.reply({ content: 'I do not have permission to send messages in this channel.', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply();
+
         const voiceChannel = interaction.member.voice.channel;
 
         if (!voiceChannel) {
-            return interaction.reply('You must be in a voice channel to use this command.');
+            await interaction.editReply('You must be connected to a voice channel to use this command.');
+            return;
         }
 
-        if (voiceChannel.parentId !== interaction.channel.parentId) {
-            return interaction.reply('You cannot manage a channel in a different category.');
+        const everyonePermissions = voiceChannel.permissionsFor(voiceChannel.guild.roles.everyone);
+        if (!everyonePermissions.has(PermissionFlagsBits.Connect)) {
+            await interaction.editReply('This channel is already locked. Use the `/unlock` command to unlock it.');
+            return;
         }
 
-        const userCount = voiceChannel.members.size;
-
-        if (userCount === 1) {
-            return interaction.reply('You are the only one here, so locking doesn\'t make sense.');
-        }
-
-        const targetUsers = [];
-        // Exclude bots from the vote
-        voiceChannel.members.forEach(member => {
-            if (member.id !== interaction.member.id && !member.user.bot) {
-                targetUsers.push(member);
-            }
-        });
-
-        if (votePending[voiceChannel.id] === true) {
-            return interaction.reply('There is already a vote pending on that channel.');
+        if (votePending[voiceChannel.id]) {
+            await interaction.editReply('A vote is already pending for this channel.');
+            return;
         }
 
         votePending[voiceChannel.id] = true;
-        
-        // Call vote system - Ensure that utils.vote works with interactions
-        utils.vote(`${interaction.user.tag} has requested to lock ${voiceChannel.name}. Please vote using the reactions below.`, interaction.channel, {
-            targetUsers,
-            time: 10000
-        }).then(results => {
-            if (((results.agree.count + 1) / userCount) > 0.5) { // +1 for requesting user
-                doLock(voiceChannel).then(() => {
-                    interaction.reply('Channel locked.');
-                });
+
+        // Filter out bots to get only human members
+        const humanMembers = Array.from(voiceChannel.members.values()).filter(member => !member.user.bot);
+        const subject = `Lock ${voiceChannel.name}? Please vote using the reactions below.`;
+
+        try {
+            const results = await utils.vote(subject, interaction.channel, {
+                targetUsers: humanMembers,
+                time: 30000,
+            });
+
+            // Calculate the majority threshold based on human members only
+            const totalHumanMembers = humanMembers.length;
+            const majorityThreshold = Math.floor(totalHumanMembers / 2) + 1;
+
+            if (results.agree.count >= majorityThreshold) {
+                await lockChannel(voiceChannel);
+                await interaction.editReply('Channel locked.');
             } else {
-                interaction.reply('Request rejected by channel members.');
+                await interaction.editReply('Not enough votes to lock the channel.');
             }
+        } catch (error) {
+            console.error('Error during voting process:', error);
+            await interaction.editReply('Vote timed out or failed.');
+        } finally {
             delete votePending[voiceChannel.id];
-        }).catch(() => {
-            delete votePending[voiceChannel.id];
-        });
-    }
+        }
+    },
 };
+
