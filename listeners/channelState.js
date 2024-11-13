@@ -10,9 +10,34 @@ const SEARCH_ENGINE_ID = process.env.SEARCH_ENGINE_ID;
 const FILE_PATH = './gameAbbreviations.json';
 
 /**
+ * Validates if the subreddit name is a suitable match for the game name based on character sequence.
+ * @param {string} subredditName - The name found in the subreddit.
+ * @param {string} gameName - The full game name to compare against.
+ * @param {number} threshold - Percentage threshold for a valid match.
+ * @returns {boolean} - True if match is valid.
+ */
+function isValidMatch(subredditName, gameName, threshold = 0.8) {
+    let subredditIndex = 0;
+    let matchCount = 0;
+    const normalizedSubreddit = subredditName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const normalizedGameName = gameName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    for (const char of normalizedGameName) {
+        if (char === normalizedSubreddit[subredditIndex]) {
+            matchCount++;
+            subredditIndex++;
+            if (subredditIndex >= normalizedSubreddit.length) break;
+        }
+    }
+    
+    const matchPercentage = matchCount / normalizedSubreddit.length;
+    return matchPercentage >= threshold;
+}
+
+/**
  * Queries Google to find subreddit abbreviations for a game name.
  * @param {string} gameName - The name of the game.
- * @returns {Promise<string|null>} - The subreddit name or null if not found.
+ * @returns {Promise<string|null>} - The best-matching subreddit name or null if not found.
  */
 async function queryGoogleForAbbreviation(gameName) {
     let abbreviations = loadAbbreviationsFromFile();
@@ -28,15 +53,20 @@ async function queryGoogleForAbbreviation(gameName) {
                 const url = item.link;
                 const subredditMatch = url.match(/reddit\.com\/r\/(\w+)/);
                 if (subredditMatch) {
-                    const subredditName = subredditMatch[1];
-                    abbreviations[gameName] = subredditName;
-                    saveAbbreviationsToFile(abbreviations);
-                    return subredditName;
+                    let subredditName = subredditMatch[1];
+                    subredditName = subredditName.charAt(0).toUpperCase() + subredditName.slice(1); // Capitalize first letter
+
+                    if (isValidMatch(subredditName, gameName)) {
+                        abbreviations[gameName] = subredditName;
+                        saveAbbreviationsToFile(abbreviations);
+                        return subredditName;
+                    }
                 }
             }
         }
         return null;
     } catch (error) {
+        console.error('[ERROR] Error querying Google for abbreviation:', error);
         return null;
     }
 }

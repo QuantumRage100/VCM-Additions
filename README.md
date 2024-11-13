@@ -13,7 +13,7 @@ Will manage channels in any category that the bot has MANAGE_CHANNELS, MANAGE_RO
   - UnLock the channel so that anyone with permissoins may join using the 'Unlock' command (reverts to deafult catagory permissoins)
   - Boot a user from the voice channel using the 'boot'/'kick' command
   
-Dynamic command handling is based on https://github.com/discordjs/guide/tree/master/code_samples/command-handling/dynamic-commands
+~~Dynamic command handling is based on https://github.com/discordjs/guide/tree/master/code_samples/command-handling/dynamic-commands~~
 
 ### Configuration (.env)
 
@@ -26,7 +26,10 @@ The app bot user token. Found in the Discord application console - https://disco
 
 you will need to make your own google api search engine, and filter for just the reddit website - https://developers.google.com/custom-search/v1/overview
 
-##### "GUILD_ID"
 ##### "CLIENT_ID"
 
-this is somewhat tempowery while im working on the bot, the guild and client id are for slash command propergatoin, its faster to update slash commands for a speecified build, but in the future this will just be a global slash command propergatoin thing which will work for all servers i think? idk im learning as i go on this one
+this is your bots applicatoin id/client id and is requierd for command deployment you can find it on this page inside your bot application https://discord.com/developers/applications
+
+##### "GUILD_ID"
+
+this is 100% optional, specifying a guild id (your server id) will limit the bot command deployment to only your server, this is helpful fo rtesting or troubleshooting commands, but most of the time you can leave this blank

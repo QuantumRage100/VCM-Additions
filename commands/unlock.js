@@ -3,20 +3,35 @@ const utils = require('../utils.js');
 let votePending = {};
 
 /**
- * Unlocks the voice channel by syncing permissions with its category if available,
- * otherwise allows the CONNECT permission for @everyone.
+ * Unlocks the voice channel by setting the Connect permission to true for all roles 
+ * with permission overwrites, and sets @everyone role to default permissions.
  * @param {VoiceChannel} voiceChannel The voice channel to unlock
  * @returns {Promise}
  */
 async function unlockChannel(voiceChannel) {
     try {
-        if (voiceChannel.parent) {
-            await voiceChannel.lockPermissions();
-        } else {
-            await voiceChannel.permissionOverwrites.edit(voiceChannel.guild.roles.everyone, {
-                [PermissionFlagsBits.Connect]: null,
-            });
-        }
+        const permissionPromises = [];
+
+        // Set Connect permission to true for all roles with overwrites
+        voiceChannel.permissionOverwrites.cache.forEach(overwrite => {
+            const role = voiceChannel.guild.roles.cache.get(overwrite.id);
+            if (role) {
+                permissionPromises.push(
+                    voiceChannel.permissionOverwrites.edit(role, {
+                        [PermissionFlagsBits.Connect]: true
+                    })
+                );
+            }
+        });
+
+        // Set @everyone role to default permissions (null for Connect)
+        permissionPromises.push(
+            voiceChannel.permissionOverwrites.edit(voiceChannel.guild.roles.everyone, {
+                [PermissionFlagsBits.Connect]: null
+            })
+        );
+
+        await Promise.all(permissionPromises);
     } catch (error) {
         console.error(`Failed to unlock ${voiceChannel.name}:`, error);
     }
@@ -45,7 +60,6 @@ module.exports = {
 
         const humanMembers = Array.from(voiceChannel.members.values()).filter(member => !member.user.bot);
 
-        // Skip the vote if only one human member is in the channel
         if (humanMembers.length <= 1) {
             await unlockChannel(voiceChannel);
             await interaction.editReply('Channel unlocked.');

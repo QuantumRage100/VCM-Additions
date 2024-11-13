@@ -1,5 +1,4 @@
-const { SlashCommandBuilder } = require('@discordjs/builders');
-const { PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -9,10 +8,10 @@ module.exports = {
             option.setName('command')
                 .setDescription('The command you want help with')
                 .setRequired(false)
+                .setAutocomplete(true) // Enables autocomplete
         ),
     cooldown: 5,
     async execute(interaction) {
-        // Check if the bot has permission to send messages in the current channel
         if (!interaction.channel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.SendMessages)) {
             await interaction.reply({ content: 'I do not have permission to send messages in this channel.', ephemeral: true });
             return;
@@ -24,28 +23,33 @@ module.exports = {
         const commandName = interaction.options.getString('command');
 
         if (!commandName) {
-            // If no command is specified, list all commands
+            // List all commands if no specific command is requested
             data.push('Here\'s a list of all my commands:');
-            data.push(Array.from(commands.keys()).join(', ')); // Changed this line to work with Map
+            data.push(commands.map(cmd => cmd.data.name).join(', '));
             data.push(`\nYou can send \`/help [command name]\` to get info on a specific command!`);
         } else {
-            // If a command is specified, show info about that command
+            // Display details for a specific command
             const command = commands.get(commandName);
 
             if (!command) {
                 return interaction.reply('That\'s not a valid command!');
             }
 
-            data.push(`**Name:** ${command.name}`);
-
-            if (command.description) data.push(`**Description:** ${command.description}`);
-            if (command.aliases) data.push(`**Aliases:** ${command.aliases.join(', ')}`);
-            if (command.usage) data.push(`**Usage:** \`/help ${command.name} ${command.usage}\``);
-
+            // Retrieve command details
+            data.push(`**Name:** ${command.data.name}`);
+            data.push(`**Description:** ${command.data.description}`);
             data.push(`**Cooldown:** ${command.cooldown || 3} second(s)`);
         }
 
-        // Send the response
         return interaction.reply({ content: data.join('\n'), ephemeral: true });
-    }
+    },
+
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused();
+        const choices = Array.from(interaction.client.commands.keys());
+        const filtered = choices.filter(choice => choice.startsWith(focusedValue));
+        await interaction.respond(
+            filtered.map(choice => ({ name: choice, value: choice })).slice(0, 25) // Discord allows a max of 25 suggestions
+        );
+    },
 };

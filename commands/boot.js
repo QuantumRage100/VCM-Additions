@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('@discordjs/builders');
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const utils = require('../utils.js');
 let votePending = {};
 
@@ -14,63 +14,91 @@ module.exports = {
     guildOnly: true,
 
     async execute(interaction) {
-        let subject = '',
-            voiceChannel = interaction.member.voice.channel,
-            targetUsers = [],
-            userCount,
-            user = interaction.options.getUser('user');
+        await interaction.deferReply();
+
+        const user = interaction.options.getUser('user');
+        const voiceChannel = interaction.member.voice.channel;
 
         if (!voiceChannel) {
-            return interaction.reply('User not connected to a voice channel');
-        }
-
-        if (voiceChannel.parentId !== interaction.channel.parentId) {
-            return interaction.reply('Cannot manage the voice channel');
+            return interaction.editReply('You must be in a voice channel to use this command.');
         }
 
         if (!user) {
-            return interaction.reply('No user mentioned');
+            return interaction.editReply('No user mentioned.');
         }
 
         if (interaction.user.id === user.id) {
-            return interaction.reply('Why?');
+            return interaction.editReply('Why would you want to boot yourself?');
         }
 
-        userCount = voiceChannel.members.size;
-        voiceChannel.members.forEach(member => {
-            if (member.id !== interaction.member.id) {
-                targetUsers.push(member);
-            }
-        });
+        const botPermissions = voiceChannel.permissionsFor(interaction.client.user);
 
-        if (votePending[voiceChannel.id] === true) {
-            return interaction.reply('There is already a vote pending on that channel');
+        if (!botPermissions.has([PermissionFlagsBits.MoveMembers, PermissionFlagsBits.ManageChannels])) {
+            return interaction.editReply('I do not have permission to manage or move members in this voice channel.');
         }
+
+        const userCount = voiceChannel.members.filter(member => !member.user.bot).size;
+        const targetUsers = Array.from(voiceChannel.members.values()).filter(member => !member.user.bot && member.id !== interaction.member.id);
+
+        if (votePending[voiceChannel.id]) {
+            return interaction.editReply('There is already a vote pending on this channel.');
+        }
+
         votePending[voiceChannel.id] = true;
 
-        utils.vote(interaction.user.toString() + ' has requested that ' + user.toString() + ' be kicked from ' + voiceChannel.name + '? Please vote using the reactions below.', interaction.channel, {
-            targetUsers: targetUsers,
+        if (userCount === 1) {
+            await this.bootUser(interaction, voiceChannel, user);
+            delete votePending[voiceChannel.id];
+            return;
+        }
+
+        utils.vote(`${interaction.user} has requested that ${user} be kicked from ${voiceChannel.name}. Please vote using the reactions below.`, interaction.channel, {
+            targetUsers,
             time: 10000
-        }).then(results => {
-            if (((results.agree.count + 1) / userCount) > 0.5) { //+1 for requesting user
-                voiceChannel.permissionOverwrites.create(user, {
-                    'CONNECT': false
-                }).then(() => {
-                    let newChannel = voiceChannel.parent.children.find(channel => {
-                        return channel.type === 'voice' && channel.members.size === 0;
-                    });
-                    user.send('You have been removed from ' + voiceChannel.name).then(() => {
-                        user.setVoiceChannel(newChannel).then(() => {
-                            interaction.reply('User removed');
-                        });
-                    });
-                });
+        }).then(async results => {
+            if (((results.agree.count + 1) / userCount) > 0.5) {
+                await this.bootUser(interaction, voiceChannel, user);
             } else {
-                interaction.reply('Request rejected by channel members');
+                await interaction.editReply('Request rejected by channel members.');
             }
             delete votePending[voiceChannel.id];
-        }).catch(() => {
+        }).catch(error => {
+            console.error('[ERROR] Vote failed or timed out:', error);
             delete votePending[voiceChannel.id];
+            interaction.editReply('Vote timed out or failed.');
         });
+    },
+
+    async bootUser(interaction, voiceChannel, user) {
+        try {
+            await voiceChannel.permissionOverwrites.create(user, {
+                [PermissionFlagsBits.Connect]: false
+            });
+
+            try {
+                await user.send(`You have been removed from ${voiceChannel.name}`);
+            } catch (dmError) {
+                console.warn(`[WARNING] Could not send DM to user: ${dmError.message}`);
+            }
+
+            const refreshedMember = await voiceChannel.guild.members.fetch(user.id);
+            if (refreshedMember.voice.channelId === voiceChannel.id) {
+                const newChannel = voiceChannel.parent?.children.cache.find(channel =>
+                    channel.type === ChannelType.GuildVoice && channel.members.size === 0
+                );
+
+                if (newChannel) {
+                    await refreshedMember.voice.setChannel(newChannel);
+                    await interaction.editReply('User removed.');
+                } else {
+                    await interaction.editReply('No empty channel available to move the user.');
+                }
+            } else {
+                await interaction.editReply('User already removed from the channel.');
+            }
+        } catch (error) {
+            console.error('[ERROR] Failed to boot user:', error);
+            await interaction.editReply('An error occurred while trying to remove the user.');
+        }
     }
 };
