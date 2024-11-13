@@ -56,6 +56,12 @@ module.exports = {
     guildOnly: true,
 
     async execute(interaction) {
+        // Check if the bot has permission to send messages in the current channel
+        if (!interaction.channel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.SendMessages)) {
+            await interaction.reply({ content: 'I do not have permission to send messages in this channel.', ephemeral: true });
+            return;
+        }
+
         const state = interaction.options.getString('state');
         let exclude = interaction.options.getRole('exclude');
         const voiceChannel = interaction.member.voice.channel;
