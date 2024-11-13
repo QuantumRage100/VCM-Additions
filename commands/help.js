@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
-const { CommandInteraction } = require('discord.js');
+const { PermissionFlagsBits } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -12,6 +12,12 @@ module.exports = {
         ),
     cooldown: 5,
     async execute(interaction) {
+        // Check if the bot has permission to send messages in the current channel
+        if (!interaction.channel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.SendMessages)) {
+            await interaction.reply({ content: 'I do not have permission to send messages in this channel.', ephemeral: true });
+            return;
+        }
+
         const { commands } = interaction.client;
         const data = [];
 
