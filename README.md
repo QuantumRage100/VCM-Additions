@@ -16,10 +16,6 @@ Dynamic command handling is based on https://github.com/discordjs/guide/tree/mas
 
 ### Configuration (.env)
 
-##### "COMMAND_PREFIX"
-
-The prefix that the command listener will respond to (default is '!')
-
 ##### "DISCORD_TOKEN"
 
 The app bot user token. Found in the Discord application console - https://discordapp.com/developers/applications/me/
@@ -28,3 +24,8 @@ The app bot user token. Found in the Discord application console - https://disco
 ##### "SEARCH_ENGINE_ID"
 
 you will need to make your own google api search engine, and filter for just the reddit website - https://developers.google.com/custom-search/v1/overview
+
+##### "GUILD_ID"
+##### "CLIENT_ID"
+
+this is somewhat tempowery while im working on the bot, the guild and client id are for slash command propergatoin, its faster to update slash commands for a speecified build, but in the future this will just be a global slash command propergatoin thing which will work for all servers i think? idk im learning as i go on this one
