@@ -1,65 +1,66 @@
-const { Client, GatewayIntentBits, Events } = require('discord.js');
-const { SlashCommandBuilder } = require('@discordjs/builders');
+// index.js
+const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const fs = require('fs');
-require('dotenv').config();  // Make sure this is at the top
+const path = require('path');
+require('dotenv').config();
 
+const channelStateListener = require('./listeners/channelState.js');
+
+// Initialize the client with necessary intents
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds,  // Necessary for guild events (including commands)
+        GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildMembers  // Ensure we can fetch and manage guild members
     ]
 });
 
-// Load token and guildId from the environment variables
-const token = process.env.DISCORD_TOKEN;
-const guildId = process.env.GUILD_ID;
+// Create a collection to store commands
+client.commands = new Collection();
 
-client.once('ready', async () => {
-    console.log('Bot is ready!');
+// Path to the commands directory
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-    // Initialize the commands collection
-    client.commands = new Map();
-
-    // Read all command files from the commands folder
-    const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
-    const commands = [];
-
-    // Dynamically load all commands
-    for (const file of commandFiles) {
-        const command = require(`./commands/${file}`);
-        client.commands.set(command.data.name, command);  // Store the command by its name
-        commands.push(command.data.toJSON());  // Ensure commands are properly formatted for registration
+// Register commands
+for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+    if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
+    } else {
+        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
     }
+}
 
-    try {
-        // Register all commands to the guild
-        await client.guilds.cache.get(guildId).commands.set(commands);
-        console.log('Successfully registered application (/) commands.');
-    } catch (error) {
-        console.error('Error registering commands:', error);
-    }
+// Event listener for when the bot is ready
+client.once(Events.ClientReady, () => {
+    channelStateListener.init(client);
+    console.log('Ready!');
 });
 
-// Handle interactions (slash commands)
-client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isCommand()) return;  // Ignore non-command interactions
-    console.log('Received interaction:', interaction.commandName);  // Debugging log
+// Event listener for handling interactions
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isCommand()) return;
 
-    const command = client.commands.get(interaction.commandName);  // Fetch command from collection
-    if (!command) return;
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) {
+        console.error(`No command matching ${interaction.commandName} was found.`);
+        return;
+    }
 
     try {
-        await command.execute(interaction);  // Execute command
+        await command.execute(interaction);
     } catch (error) {
+        console.error(`Error executing ${interaction.commandName}`);
         console.error(error);
-        await interaction.reply({
-            content: 'There was an error while executing this command!',
-            ephemeral: true
-        });
+        await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
     }
 });
 
-// Log in the bot using the token from the .env file
-client.login(token);
+// Log in to Discord
+client.login(process.env.DISCORD_TOKEN);
