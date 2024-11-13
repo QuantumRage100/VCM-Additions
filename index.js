@@ -1,5 +1,5 @@
 // index.js
-const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -14,7 +14,7 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMembers  // Ensure we can fetch and manage guild members
+        GatewayIntentBits.GuildMembers
     ]
 });
 
@@ -37,9 +37,22 @@ for (const file of commandFiles) {
 }
 
 // Event listener for when the bot is ready
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
     channelStateListener.init(client);
     console.log('Ready!');
+
+    try {
+        // Generate an invite link with minimal permissions
+        const inviteLink = await client.generateInvite({
+            scopes: ['bot', 'applications.commands'],
+            permissions: []
+        });
+        
+        // Format and display the invite link
+        console.log(`\n=====================\nInvite the bot using this link:\n${inviteLink}\n=====================\n`);
+    } catch (error) {
+        console.error('Error generating invite link:', error);
+    }
 });
 
 // Event listener for handling interactions

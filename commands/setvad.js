@@ -1,37 +1,49 @@
-const { SlashCommandBuilder } = require('@discordjs/builders');
-const { PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const utils = require('../utils.js');
 let votePending = {};
 
 // Function to set VAD on/off for the channel
-function doSetVad(voiceChannel, state, exclude) {
-    const allowVad = state === 'on'; // If 'on', VAD is allowed
+async function doSetVad(voiceChannel, state, exclude) {
+    const allowVad = state === 'on';
 
-    // Initialize an array for permission overwrites
-    let perms = voiceChannel.permissionOverwrites.cache.map(overwrite => {
-        return {
-            deny: overwrite.denied.remove(PermissionFlagsBits.UseVad).bitfield,
-            allow: overwrite.allowed.remove(PermissionFlagsBits.UseVad).bitfield,
-            id: overwrite.id,
-            type: overwrite.type,
-        };
-    });
+    try {
+        const members = await voiceChannel.guild.members.fetch();
 
-    // Apply the new permission overwrites to the channel
-    return voiceChannel.edit({
-        permissionOverwrites: perms
-    }).then(() => {
-        let promises = [];
+        // Set VAD for bot members to always allow
+        const botPermissionPromises = members
+            .filter(member => member.user.bot)
+            .map(botMember =>
+                voiceChannel.permissionOverwrites.edit(botMember.id, {
+                    [PermissionFlagsBits.UseVAD]: true
+                })
+            );
 
-        // Apply the VAD permission to roles, excluding the role (if provided)
-        voiceChannel.guild.roles.cache.forEach(role => {
-            promises.push(voiceChannel.permissionOverwrites.edit(role, {
-                'USE_VAD': (exclude && exclude.id === role.id) || allowVad
-            }));
+        await Promise.all(botPermissionPromises);
+
+        // Explicitly update @everyone role VAD permission
+        await voiceChannel.permissionOverwrites.edit(voiceChannel.guild.roles.everyone, {
+            [PermissionFlagsBits.UseVAD]: allowVad
+        });
+        console.log(`Set VAD for @everyone role to ${allowVad}`);
+
+        // Set VAD for other roles and members based on 'state' and exclude logic
+        const permissionPromises = [];
+        voiceChannel.permissionOverwrites.cache.forEach(overwrite => {
+            const role = voiceChannel.guild.roles.cache.get(overwrite.id);
+            if (role && role.id !== voiceChannel.guild.roles.everyone.id && (!exclude || exclude.id !== overwrite.id)) {
+                permissionPromises.push(
+                    voiceChannel.permissionOverwrites.edit(overwrite.id, {
+                        [PermissionFlagsBits.UseVAD]: allowVad
+                    })
+                );
+            }
         });
 
-        return Promise.all(promises);
-    });
+        await Promise.all(permissionPromises);
+        console.log(`Voice activation set to "${state}" successfully for ${voiceChannel.name}`);
+    } catch (error) {
+        console.error(`Failed to set VAD for ${voiceChannel.name}`, error);
+    }
 }
 
 module.exports = {
@@ -56,6 +68,8 @@ module.exports = {
     guildOnly: true,
 
     async execute(interaction) {
+        console.log('Executing /setvad command');
+
         // Check if the bot has permission to send messages in the current channel
         if (!interaction.channel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.SendMessages)) {
             await interaction.reply({ content: 'I do not have permission to send messages in this channel.', ephemeral: true });
@@ -67,58 +81,24 @@ module.exports = {
         const voiceChannel = interaction.member.voice.channel;
 
         if (!voiceChannel) {
-            return interaction.reply('You must be in a voice channel to set VAD.');
+            await interaction.reply('You must be in a voice channel to set VAD.');
+            return;
         }
 
-        // Check if the channel is in the same category as the command channel
-        if (voiceChannel.parentId !== interaction.channel.parentId) {
-            return interaction.reply('You cannot manage a voice channel in a different category.');
-        }
-
-        // Exclude is only applicable when turning VAD off
         if (state !== 'off') {
             exclude = undefined;
         }
 
-        let targetUsers = [];
-        const userCount = voiceChannel.members.size;
+        // Defer the reply to prevent timeout
+        await interaction.deferReply();
 
-        // Filter out bots from target users
-        voiceChannel.members.forEach(member => {
-            if (member.id !== interaction.member.id && !member.user.bot) {
-                targetUsers.push(member);
-            }
-        });
-
-        // If there are multiple members, initiate a vote to apply the VAD change
-        if (userCount > 1) {
-            if (votePending[voiceChannel.id] === true) {
-                return interaction.reply('There is already a vote pending on that channel.');
-            }
-
-            votePending[voiceChannel.id] = true;
-
-            // Call the vote system
-            utils.vote(`Set voice activation "${state}" for ${voiceChannel.name}? Please vote using the reactions below.`, interaction.channel, {
-                targetUsers,
-                time: 10000
-            }).then(results => {
-                if (((results.agree.count + 1) / userCount) > 0.5) { // +1 for requesting user
-                    doSetVad(voiceChannel, state, exclude).then(() => {
-                        interaction.reply(`Voice activation set to "${state}"`);
-                    });
-                } else {
-                    interaction.reply('Request rejected by channel members');
-                }
-                delete votePending[voiceChannel.id];
-            }).catch(() => {
-                delete votePending[voiceChannel.id];
-            });
-        } else {
-            // Apply the VAD setting directly if there is only one member in the channel
-            doSetVad(voiceChannel, state, exclude).then(() => {
-                interaction.reply(`Voice activation set to "${state}"`);
-            });
+        // Apply the VAD setting
+        try {
+            await doSetVad(voiceChannel, state, exclude);
+            await interaction.editReply(`Voice activation set to "${state}"`);
+        } catch (error) {
+            console.error(`Error setting VAD: ${error}`);
+            await interaction.editReply('Failed to set voice activation due to an error.');
         }
     }
 };

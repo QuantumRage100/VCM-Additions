@@ -28,22 +28,27 @@ const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log(`Started refreshing ${commands.length} application (/) commands.`);
 
-        // Fetch and clear existing commands before deploying new ones
-        console.log('Clearing existing commands...');
+        // Clear global commands
+        console.log('Clearing all global commands...');
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
+        console.log('Global commands cleared successfully.');
+
+        // Clear existing guild-specific commands before deploying new ones
+        console.log('Clearing existing guild-specific commands...');
         await rest.put(
             Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
-            { body: [] } // Clear all commands first
+            { body: [] }
         );
-        console.log('Existing commands cleared.');
+        console.log('Guild-specific commands cleared successfully.');
 
-        // Deploy new commands
-        console.log(`Deploying ${commands.length} new commands...`);
+        // Deploy new guild-specific commands
+        console.log(`Deploying ${commands.length} new guild-specific commands...`);
         const data = await rest.put(
             Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
             { body: commands }
         );
 
-        console.log(`Successfully deployed ${data.length} application (/) commands.`);
+        console.log(`Successfully deployed ${data.length} application (/) commands to guild ID ${process.env.GUILD_ID}.`);
     } catch (error) {
         console.error('Error during command deployment:', error);
     }

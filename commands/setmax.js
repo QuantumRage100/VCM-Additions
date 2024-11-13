@@ -37,16 +37,16 @@ module.exports = {
             return interaction.reply('You must be in a voice channel to set the max users.');
         }
 
-        // Check if the channel is in the same category as the command channel
-        if (voiceChannel.parentId !== interaction.channel.parentId) {
-            return interaction.reply('You cannot manage a voice channel in a different category.');
+        // Ensure the bot is only managing the user's own channel
+        if (!voiceChannel.permissionsFor(interaction.client.user).has(PermissionFlagsBits.ManageChannels)) {
+            return interaction.reply('I do not have permission to manage this voice channel.');
         }
 
         if (maxInt < 0 || maxInt >= 100) {
             return interaction.reply('Invalid user limit: ' + maxInt);
         }
 
-        const userCount = voiceChannel.members.size;
+        const userCount = voiceChannel.members.filter(member => !member.user.bot).size;
 
         if (maxInt > 0 && maxInt < userCount) {
             return interaction.reply('User limit is lower than the current user count.');
@@ -56,13 +56,8 @@ module.exports = {
             return interaction.reply('User limit is already ' + maxInt);
         }
 
-        let targetUsers = [];
-        // Exclude bots from the vote
-        voiceChannel.members.forEach(member => {
-            if (member.id !== interaction.member.id && !member.user.bot) {
-                targetUsers.push(member);
-            }
-        });
+        // Filter out bots from the voting members
+        const targetUsers = Array.from(voiceChannel.members.values()).filter(member => !member.user.bot);
 
         if (userCount > 1) {
             if (votePending[voiceChannel.id] === true) {
@@ -71,7 +66,7 @@ module.exports = {
 
             votePending[voiceChannel.id] = true;
 
-            // Call the vote system, ensure that utils.vote works with interactions
+            // Call the vote system and ensure only humans vote
             utils.vote(`Set user limit of ${voiceChannel.name} to ${maxInt}? Please vote using the reactions below.`, interaction.channel, {
                 targetUsers,
                 time: 10000

@@ -63,21 +63,15 @@ module.exports = {
             return;
         }
 
-        const everyonePermissions = voiceChannel.permissionsFor(voiceChannel.guild.roles.everyone);
-        if (!everyonePermissions.has(PermissionFlagsBits.Connect)) {
-            await interaction.editReply('This channel is already locked. Use the `/unlock` command to unlock it.');
-            return;
-        }
-
-        if (votePending[voiceChannel.id]) {
-            await interaction.editReply('A vote is already pending for this channel.');
-            return;
-        }
-
-        votePending[voiceChannel.id] = true;
-
-        // Filter out bots to get only human members
         const humanMembers = Array.from(voiceChannel.members.values()).filter(member => !member.user.bot);
+
+        // Skip the vote if only one human member is in the channel
+        if (humanMembers.length <= 1) {
+            await lockChannel(voiceChannel);
+            await interaction.editReply('Channel locked.');
+            return;
+        }
+
         const subject = `Lock ${voiceChannel.name}? Please vote using the reactions below.`;
 
         try {
@@ -86,9 +80,7 @@ module.exports = {
                 time: 30000,
             });
 
-            // Calculate the majority threshold based on human members only
-            const totalHumanMembers = humanMembers.length;
-            const majorityThreshold = Math.floor(totalHumanMembers / 2) + 1;
+            const majorityThreshold = Math.floor(humanMembers.length / 2) + 1;
 
             if (results.agree.count >= majorityThreshold) {
                 await lockChannel(voiceChannel);
@@ -104,4 +96,3 @@ module.exports = {
         }
     },
 };
-
