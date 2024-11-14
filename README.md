@@ -33,3 +33,4 @@ this is your bots applicatoin id/client id and is requierd for command deploymen
 ##### "GUILD_ID"
 
 this is 100% optional, specifying a guild id (your server id) will limit the bot command deployment to only your server, this is helpful for testing / troubleshooting commands, but most of the time you can leave this blank
+
