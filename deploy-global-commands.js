@@ -32,22 +32,30 @@ const intervalId = setInterval(() => {
     try {
         console.log(`\nStarted refreshing ${commands.length} application (/) commands.\n`);
 
-        // Clear global commands
-        console.log('Clearing all global commands...');
-        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
-        console.log('\nGlobal commands cleared successfully.\n');
+        // Attempt to clear global commands
+        try {
+            console.log('Clearing all global commands...');
+            await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
+            console.log('\nGlobal commands cleared successfully.\n');
+        } catch (error) {
+            console.error(`\n[ERROR] Invalid CLIENT_ID: "${process.env.CLIENT_ID}"\n`);
+            console.log('[INFO] The Client ID should be a valid bot application ID, typically 18 digits.');
+            console.log('[INFO] To retrieve your Client ID, go to the Discord Developer Portal, select your application, and copy the "Application ID" from the General Information tab.');
+            console.log("The bot cannot proceed without a valid CLIENT_ID. Please correct the CLIENT_ID in your .env file.\n");
+            process.exit(1);
+        }
 
-        // Check for a valid GUILD_ID and clear guild-specific commands if applicable
-        if (!process.env.GUILD_ID) {
-            // GUILD_ID is missing
-            console.warn('\n[WARNING] No GUILD_ID found in .env file. Skipping guild-specific command clearing.\n');
-            console.log('[INFO] Providing a GUILD_ID can help avoid duplicates by ensuring guild-specific commands are cleared.\n');
-        } else if (isNaN(process.env.GUILD_ID) || process.env.GUILD_ID.length < 17 || process.env.GUILD_ID.length > 19) {
-            // GUILD_ID is invalid
-            console.warn(`\n[WARNING] Invalid GUILD_ID found in .env file: "${process.env.GUILD_ID}"\n`);
-            console.log('[INFO] The Guild ID should be a 17-19 digit numeric ID.');
-            console.log('[INFO] Providing a valid GUILD_ID can help avoid duplicates by ensuring guild-specific commands are cleared.\n');
-            console.log(`To retrieve your Guild ID:
+        // Attempt to clear guild-specific commands
+        if (process.env.GUILD_ID) {
+            try {
+                console.log('Attempting to clear existing guild-specific commands...');
+                await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: [] });
+                console.log('\nGuild-specific commands cleared successfully.\n');
+            } catch (error) {
+                console.warn(`\n[WARNING] Invalid GUILD_ID found in .env file: "${process.env.GUILD_ID}"\n`);
+                console.log('[INFO] The Guild ID should be a 17-19 digit numeric ID.');
+                console.log('[INFO] Providing a valid GUILD_ID can help avoid duplicates by ensuring guild-specific commands are cleared.\n');
+                console.log(`To retrieve your Guild ID:
 1. Open Discord and go to User Settings.
 2. Go to "Advanced" and enable "Developer Mode."
 3. Navigate to your server and right-click the server name at the top.
@@ -55,10 +63,11 @@ const intervalId = setInterval(() => {
 5. Paste the Guild ID into your .env file as GUILD_ID=YOUR_GUILD_ID_HERE.
 
 Note: If no valid Guild ID is provided, only global commands will be cleared.\n`);
+            }
         } else {
-            console.log('Clearing existing guild-specific commands...');
-            await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: [] });
-            console.log('\nGuild-specific commands cleared successfully.\n');
+            // Warning if GUILD_ID is missing
+            console.warn('\n[WARNING] No GUILD_ID found in .env file. Skipping guild-specific command clearing.\n');
+            console.log('[INFO] Providing a GUILD_ID can help avoid duplicates by ensuring guild-specific commands are cleared.\n');
         }
 
         // Deploy global commands
