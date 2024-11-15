@@ -1,98 +1,19 @@
-const utils = require('../utils.js');
 const { Client, GatewayIntentBits, PermissionsBitField, Collection, ChannelType } = require('discord.js');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const { queryGoogleForAbbreviation } = require('./abbreviationHandler.js'); // Import abbreviation functions
 const fs = require('fs');
 require('dotenv').config();
 
-// API keys and file path
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const SEARCH_ENGINE_ID = process.env.SEARCH_ENGINE_ID;
-const FILE_PATH = './gameAbbreviations.json';
+// Logging control
+const LOG_COMMANDS = process.env.LOG_COMMANDS === 'true';
 
 /**
- * Validates if the subreddit name is a suitable match for the game name based on character sequence.
- * @param {string} subredditName - The name found in the subreddit.
- * @param {string} gameName - The full game name to compare against.
- * @param {number} threshold - Percentage threshold for a valid match.
- * @returns {boolean} - True if match is valid.
+ * Logs a message if LOG_COMMANDS is enabled.
+ * @param {string} message - The message to log.
  */
-function isValidMatch(subredditName, gameName, threshold = 0.8) {
-    let subredditIndex = 0;
-    let matchCount = 0;
-    const normalizedSubreddit = subredditName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    const normalizedGameName = gameName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-
-    for (const char of normalizedGameName) {
-        if (char === normalizedSubreddit[subredditIndex]) {
-            matchCount++;
-            subredditIndex++;
-            if (subredditIndex >= normalizedSubreddit.length) break;
-        }
+function logOperation(message) {
+    if (LOG_COMMANDS) {
+        console.log(`[INFO] ${message}`);
     }
-    
-    const matchPercentage = matchCount / normalizedSubreddit.length;
-    return matchPercentage >= threshold;
-}
-
-/**
- * Queries Google to find subreddit abbreviations for a game name.
- * @param {string} gameName - The name of the game.
- * @returns {Promise<string|null>} - The best-matching subreddit name or null if not found.
- */
-async function queryGoogleForAbbreviation(gameName) {
-    let abbreviations = loadAbbreviationsFromFile();
-    if (abbreviations[gameName]) return abbreviations[gameName];
-
-    const query = `"${gameName}"`;
-    const apiUrl = `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(query)}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`;
-    try {
-        const response = await fetch(apiUrl);
-        const data = await response.json();
-        if (data.items && data.items.length > 0) {
-            for (const item of data.items) {
-                const url = item.link;
-                const subredditMatch = url.match(/reddit\.com\/r\/(\w+)/);
-                if (subredditMatch) {
-                    let subredditName = subredditMatch[1];
-                    subredditName = subredditName.charAt(0).toUpperCase() + subredditName.slice(1); // Capitalize first letter
-
-                    if (isValidMatch(subredditName, gameName)) {
-                        abbreviations[gameName] = subredditName;
-                        saveAbbreviationsToFile(abbreviations);
-                        return subredditName;
-                    }
-                }
-            }
-        }
-        return null;
-    } catch (error) {
-        console.error('[ERROR] Error querying Google for abbreviation:', error);
-        return null;
-    }
-}
-
-/**
- * Loads game abbreviations from a JSON file.
- * @returns {Object} - The abbreviations object.
- */
-function loadAbbreviationsFromFile() {
-    if (fs.existsSync(FILE_PATH)) {
-        try {
-            const data = fs.readFileSync(FILE_PATH, 'utf-8');
-            return JSON.parse(data);
-        } catch (error) {
-            return {};
-        }
-    }
-    return {};
-}
-
-/**
- * Saves game abbreviations to a JSON file.
- * @param {Object} abbreviations - Abbreviations to save.
- */
-function saveAbbreviationsToFile(abbreviations) {
-    fs.writeFileSync(FILE_PATH, JSON.stringify(abbreviations, null, 2));
 }
 
 /**
@@ -114,8 +35,11 @@ function canActOn(channel) {
  */
 async function deleteEmptyChannel(channel) {
     try {
+        logOperation(`Deleting empty channel: ${channel.name}`);
         await channel.delete();
-    } catch (error) {}
+    } catch (error) {
+        console.error('[ERROR] Error deleting channel:', error);
+    }
 }
 
 // Set to prevent concurrent management of the same category
@@ -127,6 +51,7 @@ const categoryLocks = new Set();
  */
 async function manageChannels(cat) {
     if (categoryLocks.has(cat.id)) {
+        logOperation(`Category "${cat.name}" is already being managed.`);
         return;
     }
 
@@ -137,10 +62,13 @@ async function manageChannels(cat) {
         const guild = category.guild;
         const voiceChannels = category.children.cache.filter(channel => channel.type === ChannelType.GuildVoice);
 
+        logOperation(`Managing channels in category: ${category.name}`);
+
         let index = 1;
         const populatedChannels = voiceChannels.filter(channel => channel.members.size > 0);
 
         for (const channel of populatedChannels.values()) {
+            logOperation(`Renaming populated channel: ${channel.name}`);
             await getChannelName(channel, index).then(channelName => renameChannel(channel, channelName));
             index++;
         }
@@ -152,13 +80,18 @@ async function manageChannels(cat) {
         const existingChannelNames = category.children.cache.map(c => c.name);
         const newChannelName = `Voice Channel ${index}`;
         if (!existingChannelNames.includes(newChannelName)) {
+            logOperation(`Creating new channel: ${newChannelName}`);
             await guild.channels.create({
                 name: newChannelName,
                 type: ChannelType.GuildVoice,
                 parent: category
             });
         }
+    } catch (error) {
+        console.error('[ERROR] Error managing channels:', error);
     } finally {
+        logOperation(`Finished managing channels in category: ${cat.name}`);
+        console.log(); // Adds a blank line in the console
         categoryLocks.delete(cat.id);
     }
 }
@@ -173,6 +106,8 @@ async function getChannelName(channel, index) {
     let activityNames = {};
     let max = 0;
     let activityName;
+
+    logOperation(`Analyzing member activities in channel: ${channel.name}`);
 
     for (const [_, member] of channel.members) {
         const updatedMember = await channel.guild.members.fetch(member.id);
@@ -201,7 +136,8 @@ async function getChannelName(channel, index) {
     const channelName = activityName
         ? await queryGoogleForAbbreviation(activityName) || activityName
         : defaultName;
-    renameChannel(channel, channelName);
+
+    logOperation(`Determined name for channel "${channel.name}": ${channelName}`);
     return channelName;
 }
 
@@ -218,17 +154,21 @@ const rateLimit = (1000 * 60 * 10) + 1000;
 function renameChannel(channel, name) {
     if (channel.members.size === 0) {
         let category = channel.parent;
+        logOperation(`Channel "${channel.name}" is empty. Deleting and recreating with new name: ${name}`);
         channel.delete().then(() => {
             category.guild.channels.create({
                 name: name,
                 type: ChannelType.GuildVoice,
                 parent: category
-            }).catch(() => {});
+            }).catch(error => {
+                console.error('[ERROR] Error recreating empty channel:', error);
+            });
         });
         return;
     }
 
     if (channel.name === name) {
+        logOperation(`Channel "${channel.name}" already has the correct name.`);
         return;
     }
 
@@ -242,13 +182,14 @@ function renameChannel(channel, name) {
             let ccd = renameCoolDowns.get(channelId);
             let queuedName = ccd.get('name');
             if (queuedName !== undefined) {
+                logOperation(`Applying queued name "${queuedName}" to channel.`);
                 ccd.get('channel').fetch()
                     .then((queuedChannel) => {
                         queuedChannel.setName(queuedName).catch(() => {});
                     })
                     .catch(() => {});
             }
-           renameCoolDowns.delete(channelId);
+            renameCoolDowns.delete(channelId);
         }, rateLimit));
         renameCoolDowns.set(channelId, channelCoolDown);
     } else {
@@ -261,8 +202,10 @@ function renameChannel(channel, name) {
     channelCoolDown.set('channel', channel);
 
     if (count < 3) {
+        logOperation(`Renaming channel immediately: "${channel.name}" -> "${name}".`);
         channel.setName(name).catch(() => {});
     } else {
+        logOperation(`Queueing name change for "${channel.name}" to "${name}".`);
         channelCoolDown.set('name', name);
     }
 }
@@ -301,5 +244,7 @@ module.exports = {
                 }
             }
         });
+
+        logOperation('Bot initialized.');
     }
 };

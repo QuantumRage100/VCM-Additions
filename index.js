@@ -1,11 +1,15 @@
-// index.js
-const { Client, GatewayIntentBits, Collection, Events, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
 require('dotenv').config();
 
-const channelStateListener = require('./listeners/channelState.js');
+// Import the necessary files
+const channelManagement = require('./channelState/channelManagement.js');  // For channel management functions
+const abbreviationHandler = require('./channelState/abbreviationHandler.js');  // For abbreviation handling
+
+// Logging control
+const LOG_COMMANDS = process.env.LOG_COMMANDS === 'true';
 
 // Function to validate environment variables and perform login attempts
 async function validateEnv(client) {
@@ -18,7 +22,7 @@ async function validateEnv(client) {
         criticalErrors.push("Discord bot token is missing in the .env file.");
     }
 
-    // Check for Discord client ID presence and format, display if it's invalid
+    // Check for Discord client ID presence and format
     const clientId = process.env.CLIENT_ID;
     if (!clientId) {
         criticalErrors.push("Discord client ID is missing in the .env file.");
@@ -26,32 +30,32 @@ async function validateEnv(client) {
         criticalErrors.push(`Invalid Discord client ID format: ${clientId}`);
     }
 
-// Test Google API Key and Search Engine ID by making a sample request
-const googleApiKey = process.env.GOOGLE_API_KEY;
-const searchEngineId = process.env.SEARCH_ENGINE_ID;
+    // Test Google API Key and Search Engine ID by making a sample request
+    const googleApiKey = process.env.GOOGLE_API_KEY;
+    const searchEngineId = process.env.SEARCH_ENGINE_ID;
 
-if (googleApiKey && searchEngineId) {
-    const testUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${searchEngineId}&safe=off&q=test`;
-    https.get(testUrl, (res) => {
-        if (res.statusCode === 403 || res.statusCode === 400) {
-            console.warn("\n[WARNING]");
-            console.warn(`Google API key is invalid: ${googleApiKey}`);
-            console.warn(`Search Engine ID is invalid: ${searchEngineId}`);
-            console.warn("The bot will work without these, but game name shortening may not function.\n");
-        } else if (res.statusCode !== 200) {
-            console.error("Unexpected response while validating Google API key:", res.statusCode);
-        } else {
-            console.log("Successfully validated Google API key.");
-        }
-    }).on('error', (e) => {
-        console.error("Error while validating Google API key:", e);
-    });
-} else {
-    console.warn("\n[WARNING]");
-    console.warn(`Google API key is missing or invalid: ${googleApiKey || "Not provided"}`);
-    console.warn(`Search Engine ID is missing or invalid: ${searchEngineId || "Not provided"}`);
-    console.warn("The bot will work without these, but game name shortening may not function.\n");
-}
+    if (googleApiKey && searchEngineId) {
+        const testUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${searchEngineId}&safe=off&q=test`;
+        https.get(testUrl, (res) => {
+            if (res.statusCode === 403 || res.statusCode === 400) {
+                console.warn("\n[WARNING] Invalid Google API credentials:");
+                console.warn(` - Google API Key: ${googleApiKey}`);
+                console.warn(` - Search Engine ID: ${searchEngineId}`);
+                console.warn("The bot will work without these, but game name shortening may not function.\n");
+            } else if (res.statusCode !== 200) {
+                console.error(`[ERROR] Unexpected response while validating Google API Key: ${res.statusCode}`);
+            } else if (LOG_COMMANDS) {
+                console.log(`[COMMAND LOG] Successfully validated Google API Key.`);
+            }
+        }).on('error', (e) => {
+            console.error(`[ERROR] Error while validating Google API Key: ${e.message}`);
+        });
+    } else {
+        console.warn("\n[WARNING] Missing Google API credentials:");
+        console.warn(` - Google API Key: ${googleApiKey || "Not provided"}`);
+        console.warn(` - Search Engine ID: ${searchEngineId || "Not provided"}`);
+        console.warn("The bot will work without these, but game name shortening may not function.\n");
+    }
 
     // Display critical errors prominently
     if (criticalErrors.length > 0) {
@@ -81,25 +85,19 @@ if (googleApiKey && searchEngineId) {
     // Attempt to login with Discord token to validate it
     try {
         await client.login(token);
-        console.log("Successfully logged in with the provided Discord token.");
+        if (LOG_COMMANDS) console.log(`[COMMAND LOG] Successfully logged in with the provided Discord token.`);
     } catch (error) {
-        if (error.message.includes("An invalid token was provided")) {
-            console.error(`\n========== [CRITICAL ERROR] ==========\nInvalid Discord bot token: ${token}`);
-            console.error("Please check your .env file and ensure the token is correct.");
-            console.log("\nPress Enter to exit...");
-            
-            process.stdin.setRawMode(true);
-            process.stdin.resume();
-            process.stdin.on('data', () => {
-                process.stdin.setRawMode(false);
-                process.stdin.pause();
-                process.exit(1);
-            });
-            return false;
-        } else {
-            console.error("An unexpected error occurred during login:", error);
-            return false;
-        }
+        console.error(`\n========== [CRITICAL ERROR] ==========\nInvalid Discord bot token: ${token}`);
+        console.error("Please check your .env file and ensure the token is correct.");
+        console.log("\nPress Enter to exit...");
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdin.on('data', () => {
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            process.exit(1);
+        });
+        return false;
     }
     return true;
 }
@@ -142,8 +140,10 @@ const client = new Client({
 
     // Event listener for when the bot is ready
     client.once(Events.ClientReady, async () => {
-        channelStateListener.init(client);
-        console.log('Ready!');
+        // Initialize the channel management system
+        channelManagement.init(client);
+
+        console.log('[INFO] Bot is ready!');
 
         try {
             // Generate an invite link with minimal permissions
@@ -151,11 +151,11 @@ const client = new Client({
                 scopes: ['bot', 'applications.commands'],
                 permissions: []
             });
-            
+
             // Format and display the invite link
             console.log(`\n=====================\nInvite the bot using this link:\n${inviteLink}\n=====================\n`);
         } catch (error) {
-            console.error('Error generating invite link:', error);
+            console.error('[ERROR] Error generating invite link:', error);
         }
     });
 
@@ -165,16 +165,28 @@ const client = new Client({
             const command = client.commands.get(interaction.commandName);
 
             if (!command) {
-                console.error(`No command matching ${interaction.commandName} was found.`);
+                console.error(`[ERROR] No command matching ${interaction.commandName} was found.`);
                 return;
             }
 
             try {
+                const voiceChannel = interaction.member?.voice?.channel;
+
+                // Recheck if the voice channel exists for voice-based commands
+                if (['lock', 'unlock', 'setmax', 'setvad', 'boot'].includes(interaction.commandName) && !voiceChannel) {
+                    await interaction.reply({ content: 'You are not connected to a valid voice channel.', ephemeral: true });
+                    return;
+                }
+
+                // Execute the command
                 await command.execute(interaction);
             } catch (error) {
-                console.error(`Error executing ${interaction.commandName}`);
-                console.error(error);
-                await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+                console.error(`[ERROR] Error executing ${interaction.commandName}:`, error);
+                try {
+                    await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+                } catch (replyError) {
+                    console.error(`[ERROR] Error sending error message for ${interaction.commandName}:`, replyError);
+                }
             }
         } else if (interaction.isAutocomplete()) {
             const command = client.commands.get(interaction.commandName);
@@ -182,8 +194,7 @@ const client = new Client({
                 try {
                     await command.autocomplete(interaction);
                 } catch (error) {
-                    console.error(`Error during autocomplete for ${interaction.commandName}`);
-                    console.error(error);
+                    console.error(`[ERROR] Error during autocomplete for ${interaction.commandName}:`, error);
                 }
             }
         }

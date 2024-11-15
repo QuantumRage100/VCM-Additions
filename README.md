@@ -12,8 +12,7 @@ Will manage channels in any category that the bot has MANAGE_CHANNELS, MANAGE_RO
   - Lock the channel so that only members currently in it may join using the 'lock' command (music bots can still join)
   - UnLock the channel so that anyone with permissoins may join using the 'Unlock' command (reverts to deafult catagory permissoins)
   - Boot a user from the voice channel using the 'boot'/'kick' command
-  
-~~Dynamic command handling is based on https://github.com/discordjs/guide/tree/master/code_samples/command-handling/dynamic-commands~~
+
 
 ### Configuration (.env)
 
@@ -34,3 +33,10 @@ this is your bots applicatoin id/client id and is requierd for command deploymen
 
 this is 100% optional, specifying a guild id (your server id) will limit the bot command deployment to only your server, this is helpful for testing / troubleshooting commands, but most of the time you can leave this blank
 
+##### "VOTING_DURATION"
+
+lets you change the voting duration specified in ms (e.g., 60000 for 1 minute, 180000 for 3 minutes) Default is 120000 ms (which equals 2 minutes) higher times give people longer to vote, but this may also cause the bot to slow down when run in multiple large servers.
+
+##### "LOG_COMMANDS"
+
+setting this to true will log allmost all actions the bot makes (within reason) this is mostly useful for debugging in testing envyroments, the bot will allways log errors reguardless of this setting
