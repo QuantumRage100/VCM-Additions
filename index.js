@@ -5,7 +5,7 @@ const https = require('https');
 require('dotenv').config();
 
 // Import the necessary files
-const channelManagement = require('./channelState/channelManagement.js');  // For channel management functions
+const channelManagement = require('./channelState/channelManager.js');  // For channel management functions
 const abbreviationHandler = require('./channelState/abbreviationHandler.js');  // For abbreviation handling
 
 // Logging control
